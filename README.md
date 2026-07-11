@@ -88,6 +88,13 @@ scheduler started. The server listens on `http://0.0.0.0:7860` by default,
 with the MCP endpoint at `/mcp` (Streamable HTTP transport) and a health
 check at `/health`.
 
+Run the test suite (covers the keyword classifier fallback and the cache's
+dedup/sports-first ranking logic) with:
+
+```bash
+pytest
+```
+
 ## 2. Environment variables
 
 All credentials and site URLs are configuration, never hardcoded. See
