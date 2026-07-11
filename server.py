@@ -22,7 +22,6 @@ import logging
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.routing import Route
 
 from mcp.server.fastmcp import FastMCP
 
@@ -79,19 +78,12 @@ def list_sources() -> list[dict]:
     return [{"name": s.name, "url": s.url} for s in settings.sites]
 
 
-def _add_health_route():
-    """Add a plain HTTP /health route alongside the MCP endpoint, so
-    Hugging Face Spaces (and any uptime monitor) can check liveness without
-    speaking MCP."""
-    async def health(request: Request):
-        status = story_cache.status()
-        return JSONResponse({"ok": True, "cache": status})
-
-    try:
-        app = mcp.streamable_http_app()
-    except AttributeError:
-        app = mcp.sse_app()
-    app.router.routes.append(Route("/health", health))
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    """Plain HTTP health check alongside the MCP endpoint, so Hugging Face
+    Spaces (and any uptime monitor) can check liveness without speaking MCP."""
+    status = story_cache.status()
+    return JSONResponse({"ok": True, "cache": status})
 
 
 def main():
@@ -107,8 +99,6 @@ def main():
 
     # Kick off the hourly (configurable) background refresh job.
     start_scheduler()
-
-    _add_health_route()
 
     mcp.run(transport=settings.mcp_transport)
 
