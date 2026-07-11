@@ -26,7 +26,7 @@ class SiteConfig:
 
 @dataclass(frozen=True)
 class Settings:
-    # --- Source websites (three, user-configurable) ---
+    # --- Source websites (five, user-configurable): three Indian, two US ---
     site_1_name: str = os.environ.get("NEWS_SITE_1_NAME", "Times of India")
     site_1_url: str = os.environ.get(
         "NEWS_SITE_1_URL", "https://timesofindia.indiatimes.com"
@@ -37,6 +37,10 @@ class Settings:
     )
     site_3_name: str = os.environ.get("NEWS_SITE_3_NAME", "NDTV")
     site_3_url: str = os.environ.get("NEWS_SITE_3_URL", "https://www.ndtv.com")
+    site_4_name: str = os.environ.get("NEWS_SITE_4_NAME", "ESPN")
+    site_4_url: str = os.environ.get("NEWS_SITE_4_URL", "https://www.espn.com")
+    site_5_name: str = os.environ.get("NEWS_SITE_5_NAME", "AP News")
+    site_5_url: str = os.environ.get("NEWS_SITE_5_URL", "https://apnews.com")
 
     # --- Groq API (used for LLM-assisted sports classification) ---
     groq_api_key: str = os.environ.get("GROQ_API_KEY", "")
@@ -73,6 +77,8 @@ class Settings:
             SiteConfig(self.site_1_name, self.site_1_url),
             SiteConfig(self.site_2_name, self.site_2_url),
             SiteConfig(self.site_3_name, self.site_3_url),
+            SiteConfig(self.site_4_name, self.site_4_url),
+            SiteConfig(self.site_5_name, self.site_5_url),
         ]
 
 

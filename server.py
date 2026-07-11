@@ -1,8 +1,9 @@
 """
 MCP server: Indian News Sports Aggregator.
 
-Exposes cached, sports-prioritized news stories (aggregated from three
-Indian news sites) as MCP tools that Claude can call. Runs over
+Exposes cached, cricket/football/tennis-prioritized news stories (aggregated
+from three Indian news sites and two US news sites) as MCP tools that
+Claude can call. Runs over
 Streamable HTTP so it can be deployed as a long-lived service on
 Hugging Face Spaces and registered with Claude as a remote MCP server.
 
@@ -20,7 +21,7 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
@@ -47,16 +48,18 @@ mcp = FastMCP(
 
 @mcp.tool()
 def get_top_stories(limit: int = 30, sports_only: bool = False) -> list[dict]:
-    """Return cached top news stories, sports content ranked first.
+    """Return cached top news stories, cricket/football/tennis content ranked first.
 
     Args:
         limit: max number of stories to return (default 30, i.e. the
             guaranteed minimum cache size).
-        sports_only: if True, return only stories classified as sports.
+        sports_only: if True, return only cricket/football/tennis stories
+            (excludes "general").
 
     Returns:
         A list of story dicts, each with: title, url, source, category
-        ("sports" or "general"), is_sports, published_at, fetched_at.
+        ("cricket", "football", "tennis", or "general"), is_sports,
+        published_at, fetched_at.
     """
     return story_cache.get_stories(limit=limit, sports_only=sports_only)
 
@@ -96,13 +99,27 @@ async def stories(request: Request) -> JSONResponse:
     return JSONResponse(story_cache.get_stories(limit=limit, sports_only=sports_only))
 
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
 def _format_fetched_at(iso_timestamp: str | None) -> str:
     if not iso_timestamp:
         return "unknown time"
     try:
-        return datetime.fromisoformat(iso_timestamp).strftime("%b %d, %Y · %H:%M UTC")
+        return datetime.fromisoformat(iso_timestamp).astimezone(IST).strftime("%b %d, %Y · %H:%M IST")
     except ValueError:
         return iso_timestamp
+
+
+def _fetched_within_last_24h(story: dict) -> bool:
+    fetched_at = story.get("fetched_at")
+    if not fetched_at:
+        return False
+    try:
+        fetched_dt = datetime.fromisoformat(fetched_at)
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc) - fetched_dt <= timedelta(hours=24)
 
 
 # Deterministic gradient palette for card/hero thumbnails, since scraped
@@ -119,7 +136,7 @@ _HERO_GRADIENT = "linear-gradient(160deg, #1b2a4a 0%, #2f4d6b 45%, #3f6b55 100%)
 
 
 def _card_html(s: dict, index: int) -> str:
-    category = "sports" if s.get("is_sports") else "general"
+    category = s.get("category", "general")
     gradient = _CARD_GRADIENTS[index % len(_CARD_GRADIENTS)]
     return f"""
 <a class="card" data-category="{category}" href="{html.escape(s["url"])}" target="_blank" rel="noopener noreferrer">
@@ -159,19 +176,27 @@ async def index(request: Request) -> HTMLResponse:
     regular browser without an MCP client. Not a production UI, just a
     local-viewing convenience — thumbnails are gradient placeholders since
     scraped headlines carry no real images."""
-    items = story_cache.get_stories(limit=settings.max_cached_stories)
+    all_items = story_cache.get_stories(limit=settings.max_cached_stories)
+    items = [s for s in all_items if _fetched_within_last_24h(s)]
 
     if not items:
+        message = (
+            "No stories cached yet"
+            if not all_items
+            else "No stories fetched in the past 24 hours"
+        )
         return HTMLResponse(
             "<!doctype html><html><body style='background:#0b0b0f;color:#eee;"
             "font-family:system-ui,sans-serif;padding:2rem'>"
-            "<h1>No stories cached yet</h1>"
+            f"<h1>{html.escape(message)}</h1>"
             "<p>Call refresh_now or wait for the next scheduled refresh.</p>"
             "</body></html>"
         )
 
-    sports_count = sum(1 for s in items if s.get("is_sports"))
-    general_count = len(items) - sports_count
+    cricket_count = sum(1 for s in items if s.get("category") == "cricket")
+    football_count = sum(1 for s in items if s.get("category") == "football")
+    tennis_count = sum(1 for s in items if s.get("category") == "tennis")
+    general_count = len(items) - cricket_count - football_count - tennis_count
 
     hero, rest = items[0], items[1:]
     top5 = items[:5]
@@ -206,6 +231,7 @@ async def index(request: Request) -> HTMLResponse:
   .hero a.title-link:hover {{ text-decoration: underline; }}
   .hero .meta {{ color: #d8d8de; font-size: 0.9rem; }}
 
+  .scope-note {{ color: #8a8a99; font-size: 0.85rem; margin-bottom: 0.75rem; }}
   .pills {{ display: flex; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 2rem; }}
   .pill {{
     background: #1a1a22; border: 1px solid #2a2a35; border-radius: 999px;
@@ -232,7 +258,9 @@ async def index(request: Request) -> HTMLResponse:
     font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.03em;
     padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 700;
   }}
-  .tag.sports {{ background: #d6f5d6; color: #1a6b1a; }}
+  .tag.cricket {{ background: #d6f5d6; color: #1a6b1a; }}
+  .tag.football {{ background: #d6e8ff; color: #1a4d8f; }}
+  .tag.tennis {{ background: #ffe8d6; color: #8f4d1a; }}
   .tag.general {{ background: #e6e6e6; color: #555; }}
 
   .meta {{ margin-top: 0.5rem; font-size: 0.78rem; color: #9a9aa5; }}
@@ -255,9 +283,12 @@ async def index(request: Request) -> HTMLResponse:
   <div class="meta">{html.escape(hero.get("source", ""))} · {html.escape(_format_fetched_at(hero.get("fetched_at")))}</div>
 </div>
 
+<div class="scope-note">Showing stories fetched in the past 24 hours</div>
 <div class="pills">
   <div class="pill active" data-filter="all">All <span class="count">{len(items)}</span></div>
-  <div class="pill" data-filter="sports">Sports <span class="count">{sports_count}</span></div>
+  <div class="pill" data-filter="cricket">Cricket <span class="count">{cricket_count}</span></div>
+  <div class="pill" data-filter="football">Football <span class="count">{football_count}</span></div>
+  <div class="pill" data-filter="tennis">Tennis <span class="count">{tennis_count}</span></div>
   <div class="pill" data-filter="general">General <span class="count">{general_count}</span></div>
 </div>
 
