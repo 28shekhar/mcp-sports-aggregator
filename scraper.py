@@ -48,12 +48,14 @@ CANDIDATE_SELECTORS = [
 
 # Path/keyword hints that let us guess a story's category straight from its
 # URL, before any LLM/keyword classification runs. This also lets us
-# recognize a site's dedicated sports section, if the homepage links there.
-SPORTS_URL_HINTS = (
-    "/sport", "/cricket", "/football", "/tennis", "/hockey", "/olympic",
-    "/ipl", "/isl", "/kabaddi", "/badminton", "/athletics", "/wwe",
-    "/formula1", "/f1", "/chess", "-cricket-", "-football-",
+# recognize a site's dedicated cricket/football/tennis section, if the
+# homepage links there. Any other section (hockey, general, etc.) is left
+# unguessed and falls through to keyword/LLM classification as "general".
+CRICKET_URL_HINTS = ("/cricket", "/ipl", "-cricket-")
+FOOTBALL_URL_HINTS = (
+    "/football", "/soccer", "/isl", "/premier-league", "-football-", "-soccer-",
 )
+TENNIS_URL_HINTS = ("/tennis", "-tennis-")
 
 # Links that are almost never real headlines (nav, utility, legal, etc.)
 BOILERPLATE_PATTERNS = re.compile(
@@ -76,8 +78,12 @@ def _looks_like_headline(text: str) -> bool:
 
 def _guess_category(url: str) -> str | None:
     lowered = url.lower()
-    if any(hint in lowered for hint in SPORTS_URL_HINTS):
-        return "sports"
+    if any(hint in lowered for hint in CRICKET_URL_HINTS):
+        return "cricket"
+    if any(hint in lowered for hint in FOOTBALL_URL_HINTS):
+        return "football"
+    if any(hint in lowered for hint in TENNIS_URL_HINTS):
+        return "tennis"
     return None
 
 

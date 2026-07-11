@@ -1,5 +1,5 @@
 """
-Sports-vs-other classification for scraped headlines.
+Cricket/football/tennis/general classification for scraped headlines.
 
 Two layers, in priority order:
 
@@ -7,11 +7,15 @@ Two layers, in priority order:
    chat completion endpoint) - used when GROQ_API_KEY is configured. This
    is the "category detection" logic the aggregator relies on primarily,
    since a homepage headline like "Rohit Sharma steps down as captain"
-   needs real-world knowledge to recognize as sports.
+   needs real-world knowledge to recognize as cricket.
 2. A keyword/URL heuristic fallback - always available, requires no
    credentials, and is used automatically if the Groq call fails, times
    out, or no API key is configured. This guarantees the server keeps
    working (with degraded category accuracy) even without the key.
+
+Only cricket, football, and tennis get their own category; every other
+story (other sports, general news, entertainment, etc.) is "general" -
+this aggregator only tracks those three sports specifically.
 
 The Groq API key is read only from the environment (config.settings) and
 is never hardcoded.
@@ -30,35 +34,52 @@ logger = logging.getLogger("classifier")
 
 GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-SPORTS_KEYWORDS = re.compile(
+CRICKET_KEYWORDS = re.compile(
     r"\b("
-    r"cricket|football|soccer|hockey|tennis|badminton|kabaddi|olympics?|"
-    r"paralympics?|wrestl\w*|boxing|athletics|marathon|chess|wwe|f1|"
-    r"formula\s?1|motogp|golf|rugby|volleyball|basketball|kho-?kho|"
-    r"ipl|isl|bcci|icc|fifa|uefa|premier\s?league|world\s?cup|"
-    r"test\s?match|odi|t20|wicket|century|innings|batsman|bowler|all-?rounder|"
-    r"striker|midfielder|goalkeeper|medal|gold\s?medal|tournament|"
-    r"championship|grand\s?slam|wimbledon|us\s?open|australian\s?open|"
-    r"french\s?open|asian\s?games|commonwealth\s?games|"
-    r"rohit\s?sharma|virat\s?kohli|ms\s?dhoni|neeraj\s?chopra|"
-    r"pv\s?sindhu|sachin\s?tendulkar"
+    r"cricket|ipl|bcci|icc|test\s?match|odi|t20|wicket|century|innings|"
+    r"batsman|bowler|all-?rounder|"
+    r"rohit\s?sharma|virat\s?kohli|ms\s?dhoni|sachin\s?tendulkar"
+    r")\b",
+    re.IGNORECASE,
+)
+
+FOOTBALL_KEYWORDS = re.compile(
+    r"\b("
+    r"football|soccer|fifa|uefa|premier\s?league|isl|champions\s?league|"
+    r"la\s?liga|epl|striker|midfielder|goalkeeper|messi|ronaldo"
+    r")\b",
+    re.IGNORECASE,
+)
+
+TENNIS_KEYWORDS = re.compile(
+    r"\b("
+    r"tennis|wimbledon|us\s?open|australian\s?open|french\s?open|roland\s?garros|"
+    r"grand\s?slam|atp|wta|djokovic|nadal|federer|alcaraz|sinner|"
+    r"serena\s?williams"
     r")\b",
     re.IGNORECASE,
 )
 
 
-def keyword_is_sports(title: str, url: str, category_hint: str | None) -> bool:
-    if category_hint == "sports":
-        return True
-    return bool(SPORTS_KEYWORDS.search(title) or SPORTS_KEYWORDS.search(url))
+def classify_category(title: str, url: str, category_hint: str | None) -> str:
+    if category_hint in ("cricket", "football", "tennis"):
+        return category_hint
+    if CRICKET_KEYWORDS.search(title) or CRICKET_KEYWORDS.search(url):
+        return "cricket"
+    if FOOTBALL_KEYWORDS.search(title) or FOOTBALL_KEYWORDS.search(url):
+        return "football"
+    if TENNIS_KEYWORDS.search(title) or TENNIS_KEYWORDS.search(url):
+        return "tennis"
+    return "general"
 
 
 def _keyword_classify(stories: list[dict]) -> list[dict]:
     for story in stories:
-        story["is_sports"] = keyword_is_sports(
+        category = classify_category(
             story["title"], story["url"], story.get("category_hint")
         )
-        story["category"] = "sports" if story["is_sports"] else "general"
+        story["category"] = category
+        story["is_sports"] = category != "general"
         story.setdefault("classified_by", "keyword")
     return stories
 
@@ -71,13 +92,13 @@ def _groq_classify(stories: list[dict]) -> list[dict] | None:
     numbered = "\n".join(f"{i+1}. {s['title']}" for i, s in enumerate(stories))
     prompt = (
         "You are a news categorization assistant. For each numbered headline "
-        "below, decide if it is primarily about SPORTS (any game, athlete, "
-        "match, tournament, league, or sporting event) or OTHER (politics, "
-        "business, entertainment, weather, general news, etc).\n\n"
+        "below, decide if it is primarily about CRICKET, FOOTBALL/SOCCER, "
+        "TENNIS, or OTHER (any other sport, politics, business, "
+        "entertainment, weather, general news, etc).\n\n"
         f"{numbered}\n\n"
         "Respond ONLY with a JSON array of the same length, where each "
-        'element is either "sports" or "other", in the same order as the '
-        'headlines. Example: ["sports", "other", "sports"]'
+        'element is "cricket", "football", "tennis", or "other", in the same '
+        'order as the headlines. Example: ["cricket", "other", "football"]'
     )
 
     try:
@@ -109,9 +130,11 @@ def _groq_classify(stories: list[dict]) -> list[dict] | None:
             )
 
         for story, label in zip(stories, labels):
-            is_sports = str(label).strip().lower() == "sports"
-            story["is_sports"] = is_sports
-            story["category"] = "sports" if is_sports else "general"
+            category = str(label).strip().lower()
+            if category not in ("cricket", "football", "tennis"):
+                category = "general"
+            story["category"] = category
+            story["is_sports"] = category != "general"
             story["classified_by"] = "groq"
         return stories
     except Exception as exc:
@@ -120,7 +143,7 @@ def _groq_classify(stories: list[dict]) -> list[dict] | None:
 
 
 def classify_stories(stories: list[dict], batch_size: int = 30) -> list[dict]:
-    """Classify every story as sports/general, mutating and returning the list."""
+    """Classify every story as cricket/football/general, mutating and returning the list."""
     if not stories:
         return stories
 
