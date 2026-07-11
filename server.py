@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import html
 import logging
+from datetime import datetime
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
@@ -95,6 +96,15 @@ async def stories(request: Request) -> JSONResponse:
     return JSONResponse(story_cache.get_stories(limit=limit, sports_only=sports_only))
 
 
+def _format_fetched_at(iso_timestamp: str | None) -> str:
+    if not iso_timestamp:
+        return "unknown time"
+    try:
+        return datetime.fromisoformat(iso_timestamp).strftime("%b %d, %Y · %H:%M UTC")
+    except ValueError:
+        return iso_timestamp
+
+
 @mcp.custom_route("/", methods=["GET"])
 async def index(request: Request) -> HTMLResponse:
     """Minimal HTML page listing cached headlines as clickable links, so the
@@ -106,7 +116,8 @@ async def index(request: Request) -> HTMLResponse:
         f'{html.escape(s.get("category", ""))}</span> '
         f'<a href="{html.escape(s["url"])}" target="_blank" rel="noopener noreferrer">'
         f'{html.escape(s["title"])}</a> '
-        f'<span class="source">— {html.escape(s.get("source", ""))}</span></li>'
+        f'<span class="source">— {html.escape(s.get("source", ""))}</span>'
+        f'<br><span class="fetched_at">Fetched {html.escape(_format_fetched_at(s.get("fetched_at")))}</span></li>'
         for s in items
     )
     page = f"""<!doctype html>
@@ -125,6 +136,7 @@ async def index(request: Request) -> HTMLResponse:
   .tag.sports {{ background: #d6f5d6; color: #1a6b1a; }}
   .tag.general {{ background: #e6e6e6; color: #555; }}
   .source {{ color: #888; font-size: 0.85rem; }}
+  .fetched_at {{ color: #aaa; font-size: 0.78rem; }}
 </style>
 </head>
 <body>
