@@ -105,45 +105,186 @@ def _format_fetched_at(iso_timestamp: str | None) -> str:
         return iso_timestamp
 
 
+# Deterministic gradient palette for card/hero thumbnails, since scraped
+# headlines carry no real images. Cycled by index for visual variety.
+_CARD_GRADIENTS = [
+    "linear-gradient(135deg, #2b3a55, #4d6a8a)",
+    "linear-gradient(135deg, #3a2b55, #6a4d8a)",
+    "linear-gradient(135deg, #1f4d40, #3d8a6a)",
+    "linear-gradient(135deg, #55402b, #8a6a4d)",
+    "linear-gradient(135deg, #2b4a55, #4d7d8a)",
+    "linear-gradient(135deg, #4a2b55, #7d4d8a)",
+]
+_HERO_GRADIENT = "linear-gradient(160deg, #1b2a4a 0%, #2f4d6b 45%, #3f6b55 100%)"
+
+
+def _card_html(s: dict, index: int) -> str:
+    category = "sports" if s.get("is_sports") else "general"
+    gradient = _CARD_GRADIENTS[index % len(_CARD_GRADIENTS)]
+    return f"""
+<a class="card" data-category="{category}" href="{html.escape(s["url"])}" target="_blank" rel="noopener noreferrer">
+  <div class="card-thumb" style="background: {gradient}">
+    <span class="tag {category}">{html.escape(s.get("category", ""))}</span>
+  </div>
+  <div class="card-body">
+    <h3>{html.escape(s["title"])}</h3>
+    <div class="meta">
+      <span class="source">{html.escape(s.get("source", ""))}</span>
+      <span class="dot">·</span>
+      <span class="fetched_at">{html.escape(_format_fetched_at(s.get("fetched_at")))}</span>
+    </div>
+  </div>
+</a>"""
+
+
+def _sidebar_item_html(s: dict, rank: int) -> str:
+    return f"""
+<a class="sidebar-item" href="{html.escape(s["url"])}" target="_blank" rel="noopener noreferrer">
+  <span class="rank">{rank}</span>
+  <div>
+    <h4>{html.escape(s["title"])}</h4>
+    <div class="meta">
+      <span class="source">{html.escape(s.get("source", ""))}</span>
+      <span class="dot">·</span>
+      <span class="fetched_at">{html.escape(_format_fetched_at(s.get("fetched_at")))}</span>
+    </div>
+  </div>
+</a>"""
+
+
 @mcp.custom_route("/", methods=["GET"])
 async def index(request: Request) -> HTMLResponse:
-    """Minimal HTML page listing cached headlines as clickable links, so the
-    scraped news data can be browsed in a regular browser without an MCP
-    client. Not a production UI, just a local-viewing convenience."""
+    """Dark-themed HTML page listing cached headlines as a hero + card grid
+    + top-stories sidebar, so the scraped news data can be browsed in a
+    regular browser without an MCP client. Not a production UI, just a
+    local-viewing convenience — thumbnails are gradient placeholders since
+    scraped headlines carry no real images."""
     items = story_cache.get_stories(limit=settings.max_cached_stories)
-    rows = "\n".join(
-        f'<li><span class="tag {"sports" if s.get("is_sports") else "general"}">'
-        f'{html.escape(s.get("category", ""))}</span> '
-        f'<a href="{html.escape(s["url"])}" target="_blank" rel="noopener noreferrer">'
-        f'{html.escape(s["title"])}</a> '
-        f'<span class="source">— {html.escape(s.get("source", ""))}</span>'
-        f'<br><span class="fetched_at">Fetched {html.escape(_format_fetched_at(s.get("fetched_at")))}</span></li>'
-        for s in items
-    )
+
+    if not items:
+        return HTMLResponse(
+            "<!doctype html><html><body style='background:#0b0b0f;color:#eee;"
+            "font-family:system-ui,sans-serif;padding:2rem'>"
+            "<h1>No stories cached yet</h1>"
+            "<p>Call refresh_now or wait for the next scheduled refresh.</p>"
+            "</body></html>"
+        )
+
+    sports_count = sum(1 for s in items if s.get("is_sports"))
+    general_count = len(items) - sports_count
+
+    hero, rest = items[0], items[1:]
+    top5 = items[:5]
+
+    cards_html = "\n".join(_card_html(s, i) for i, s in enumerate(rest))
+    sidebar_html = "\n".join(_sidebar_item_html(s, i + 1) for i, s in enumerate(top5))
+
     page = f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Indian News Sports Aggregator</title>
 <style>
-  body {{ font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }}
-  h1 {{ font-size: 1.3rem; }}
-  ul {{ list-style: none; padding: 0; }}
-  li {{ padding: 0.5rem 0; border-bottom: 1px solid #ddd; }}
-  a {{ text-decoration: none; }}
-  a:hover {{ text-decoration: underline; }}
-  .tag {{ font-size: 0.7rem; text-transform: uppercase; padding: 0.1rem 0.4rem; border-radius: 3px; margin-right: 0.4rem; }}
+  :root {{ color-scheme: dark; }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #0b0b0f; color: #f2f2f5;
+    margin: 0; padding: 2rem clamp(1rem, 4vw, 3rem) 4rem;
+  }}
+  a {{ color: inherit; text-decoration: none; }}
+  h1, h2, h3, h4 {{ margin: 0; }}
+
+  .hero {{
+    position: relative; border-radius: 16px; overflow: hidden;
+    padding: 4rem 2rem; text-align: center; margin-bottom: 2rem;
+    background: {_HERO_GRADIENT};
+  }}
+  .hero .spotlight {{ color: #ffd76a; font-weight: 600; letter-spacing: 0.05em; }}
+  .hero h1 {{ font-size: clamp(1.6rem, 4vw, 2.6rem); margin: 0.75rem 0 1rem; line-height: 1.25; }}
+  .hero a.title-link:hover {{ text-decoration: underline; }}
+  .hero .meta {{ color: #d8d8de; font-size: 0.9rem; }}
+
+  .pills {{ display: flex; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 2rem; }}
+  .pill {{
+    background: #1a1a22; border: 1px solid #2a2a35; border-radius: 999px;
+    padding: 0.5rem 1rem; font-size: 0.85rem; color: #cfcfd6; cursor: pointer;
+  }}
+  .pill.active {{ background: #2a2a3d; color: #fff; border-color: #4d4d6a; }}
+  .pill .count {{ color: #8a8a99; margin-left: 0.35rem; }}
+
+  .layout {{ display: grid; grid-template-columns: 1fr 320px; gap: 2rem; align-items: start; }}
+  @media (max-width: 900px) {{ .layout {{ grid-template-columns: 1fr; }} }}
+
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1.25rem; }}
+  .card {{
+    display: block; background: #15151b; border: 1px solid #232330; border-radius: 12px;
+    overflow: hidden; transition: transform 0.15s ease, border-color 0.15s ease;
+  }}
+  .card:hover {{ transform: translateY(-2px); border-color: #3a3a4d; }}
+  .card.hidden {{ display: none; }}
+  .card-thumb {{ height: 110px; position: relative; padding: 0.6rem; }}
+  .card-body {{ padding: 0.9rem 1rem 1.1rem; }}
+  .card-body h3 {{ font-size: 0.98rem; line-height: 1.35; font-weight: 600; }}
+
+  .tag {{
+    font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 700;
+  }}
   .tag.sports {{ background: #d6f5d6; color: #1a6b1a; }}
   .tag.general {{ background: #e6e6e6; color: #555; }}
-  .source {{ color: #888; font-size: 0.85rem; }}
-  .fetched_at {{ color: #aaa; font-size: 0.78rem; }}
+
+  .meta {{ margin-top: 0.5rem; font-size: 0.78rem; color: #9a9aa5; }}
+  .meta .dot {{ margin: 0 0.35rem; }}
+
+  .sidebar h2 {{ font-size: 1.1rem; margin-bottom: 1rem; }}
+  .sidebar-item {{ display: flex; gap: 0.75rem; padding: 0.85rem 0; border-bottom: 1px solid #202028; }}
+  .sidebar-item:hover h4 {{ text-decoration: underline; }}
+  .sidebar-item .rank {{
+    font-size: 1.3rem; font-weight: 800; color: #4d4d6a; min-width: 1.3rem;
+  }}
+  .sidebar-item h4 {{ font-size: 0.9rem; line-height: 1.3; font-weight: 600; }}
 </style>
 </head>
 <body>
-<h1>Indian News Sports Aggregator — {len(items)} cached stories</h1>
-<ul>
-{rows}
-</ul>
+
+<div class="hero">
+  <div class="spotlight">✦ IN THE SPOTLIGHT</div>
+  <h1><a class="title-link" href="{html.escape(hero["url"])}" target="_blank" rel="noopener noreferrer">{html.escape(hero["title"])}</a></h1>
+  <div class="meta">{html.escape(hero.get("source", ""))} · {html.escape(_format_fetched_at(hero.get("fetched_at")))}</div>
+</div>
+
+<div class="pills">
+  <div class="pill active" data-filter="all">All <span class="count">{len(items)}</span></div>
+  <div class="pill" data-filter="sports">Sports <span class="count">{sports_count}</span></div>
+  <div class="pill" data-filter="general">General <span class="count">{general_count}</span></div>
+</div>
+
+<div class="layout">
+  <div class="grid" id="grid">
+{cards_html}
+  </div>
+  <div class="sidebar">
+    <h2>Top stories</h2>
+{sidebar_html}
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll(".pill").forEach(function (pill) {{
+    pill.addEventListener("click", function () {{
+      document.querySelectorAll(".pill").forEach(function (p) {{ p.classList.remove("active"); }});
+      pill.classList.add("active");
+      var filter = pill.getAttribute("data-filter");
+      document.querySelectorAll("#grid .card").forEach(function (card) {{
+        var matches = filter === "all" || card.getAttribute("data-category") === filter;
+        card.classList.toggle("hidden", !matches);
+      }});
+    }});
+  }});
+</script>
+
 </body>
 </html>"""
     return HTMLResponse(page)
