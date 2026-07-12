@@ -23,6 +23,7 @@ import html
 import logging
 from datetime import datetime, timedelta, timezone
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
@@ -97,6 +98,15 @@ async def stories(request: Request) -> JSONResponse:
     sports_only = request.query_params.get("sports_only", "").lower() in ("1", "true", "yes")
     limit = int(request.query_params.get("limit", settings.min_cached_stories))
     return JSONResponse(story_cache.get_stories(limit=limit, sports_only=sports_only))
+
+
+@mcp.custom_route("/refresh", methods=["POST"])
+async def refresh(request: Request) -> JSONResponse:
+    """Trigger an immediate fetch+classify+cache-update cycle, for the
+    viewer's manual refresh button. Runs the (blocking) scrape in a
+    thread so it doesn't stall the async event loop."""
+    status = await run_in_threadpool(refresh_cache)
+    return JSONResponse({"ok": True, "cache": status})
 
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -232,13 +242,25 @@ async def index(request: Request) -> HTMLResponse:
   .hero .meta {{ color: #d8d8de; font-size: 0.9rem; }}
 
   .scope-note {{ color: #8a8a99; font-size: 0.85rem; margin-bottom: 0.75rem; }}
-  .pills {{ display: flex; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 2rem; }}
+  .pills-row {{
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 0.75rem; margin-bottom: 2rem;
+  }}
+  .pills {{ display: flex; gap: 0.6rem; flex-wrap: wrap; }}
   .pill {{
     background: #1a1a22; border: 1px solid #2a2a35; border-radius: 999px;
     padding: 0.5rem 1rem; font-size: 0.85rem; color: #cfcfd6; cursor: pointer;
   }}
   .pill.active {{ background: #2a2a3d; color: #fff; border-color: #4d4d6a; }}
   .pill .count {{ color: #8a8a99; margin-left: 0.35rem; }}
+
+  .refresh-btn {{
+    background: #2a2a3d; border: 1px solid #4d4d6a; border-radius: 999px;
+    padding: 0.5rem 1.1rem; font-size: 0.85rem; color: #fff; cursor: pointer;
+    font-family: inherit;
+  }}
+  .refresh-btn:hover {{ background: #34344a; }}
+  .refresh-btn:disabled {{ opacity: 0.6; cursor: default; }}
 
   .layout {{ display: grid; grid-template-columns: 1fr 320px; gap: 2rem; align-items: start; }}
   @media (max-width: 900px) {{ .layout {{ grid-template-columns: 1fr; }} }}
@@ -284,12 +306,15 @@ async def index(request: Request) -> HTMLResponse:
 </div>
 
 <div class="scope-note">Showing stories fetched in the past 24 hours</div>
-<div class="pills">
-  <div class="pill active" data-filter="all">All <span class="count">{len(items)}</span></div>
-  <div class="pill" data-filter="cricket">Cricket <span class="count">{cricket_count}</span></div>
-  <div class="pill" data-filter="football">Football <span class="count">{football_count}</span></div>
-  <div class="pill" data-filter="tennis">Tennis <span class="count">{tennis_count}</span></div>
-  <div class="pill" data-filter="general">General <span class="count">{general_count}</span></div>
+<div class="pills-row">
+  <div class="pills">
+    <div class="pill active" data-filter="all">All <span class="count">{len(items)}</span></div>
+    <div class="pill" data-filter="cricket">Cricket <span class="count">{cricket_count}</span></div>
+    <div class="pill" data-filter="football">Football <span class="count">{football_count}</span></div>
+    <div class="pill" data-filter="tennis">Tennis <span class="count">{tennis_count}</span></div>
+    <div class="pill" data-filter="general">General <span class="count">{general_count}</span></div>
+  </div>
+  <button id="refresh-btn" class="refresh-btn" type="button">⟳ Refresh now</button>
 </div>
 
 <div class="layout">
@@ -313,6 +338,21 @@ async def index(request: Request) -> HTMLResponse:
         card.classList.toggle("hidden", !matches);
       }});
     }});
+  }});
+
+  document.getElementById("refresh-btn").addEventListener("click", function () {{
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = "⟳ Refreshing…";
+    fetch("/refresh", {{ method: "POST" }})
+      .then(function (resp) {{
+        if (!resp.ok) throw new Error("refresh failed");
+        window.location.reload();
+      }})
+      .catch(function () {{
+        btn.disabled = false;
+        btn.textContent = "⟳ Refresh failed, try again";
+      }});
   }});
 </script>
 

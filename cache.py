@@ -66,8 +66,14 @@ class StoryCache:
     # ---- core ranking ----
     @staticmethod
     def _sort_key(story: dict):
-        # Sports first (False sorts before True with `not`), then recency.
-        return (not story.get("is_sports", False), story.get("fetched_at", ""))
+        # Sports first (False sorts before True with `not`), then most
+        # recently fetched first (negated timestamp sorts descending).
+        fetched_at = story.get("fetched_at", "")
+        try:
+            recency = -datetime.fromisoformat(fetched_at).timestamp()
+        except (ValueError, TypeError):
+            recency = 0
+        return (not story.get("is_sports", False), recency)
 
     def update(self, new_stories: list[dict]):
         """Merge freshly fetched+classified stories into the cache."""
