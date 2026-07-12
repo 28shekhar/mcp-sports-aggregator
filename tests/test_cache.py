@@ -31,6 +31,19 @@ def test_update_ranks_sports_before_general(tmp_path, monkeypatch):
     assert [s["url"] for s in stories] == ["https://x.com/sports", "https://x.com/general"]
 
 
+def test_update_ranks_most_recently_fetched_first_within_group(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    store = cache_module.StoryCache()
+
+    store.update([
+        _story("https://x.com/older", True, "2026-01-01T00:00:00+00:00"),
+        _story("https://x.com/newer", True, "2026-01-02T00:00:00+00:00"),
+    ])
+
+    stories = store.get_stories(limit=10)
+    assert [s["url"] for s in stories] == ["https://x.com/newer", "https://x.com/older"]
+
+
 def test_get_stories_sports_only_filters_general(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     store = cache_module.StoryCache()
