@@ -132,6 +132,22 @@ def _fetched_within_last_24h(story: dict) -> bool:
     return datetime.now(timezone.utc) - fetched_dt <= timedelta(hours=24)
 
 
+def _select_display_items(all_items: list[dict]) -> tuple[list[dict], bool]:
+    """Pick which cached stories the viewer should show.
+
+    Prefers stories fetched in the last 24h. If none qualify but the cache
+    has older data (e.g. the host paused between scheduled refreshes),
+    falls back to showing that instead of an empty page. Returns
+    (items, showing_stale).
+    """
+    recent = [s for s in all_items if _fetched_within_last_24h(s)]
+    if recent:
+        return recent, False
+    if all_items:
+        return all_items, True
+    return [], False
+
+
 # Deterministic gradient palette for card/hero thumbnails, since scraped
 # headlines carry no real images. Cycled by index for visual variety.
 _CARD_GRADIENTS = [
@@ -187,18 +203,13 @@ async def index(request: Request) -> HTMLResponse:
     local-viewing convenience — thumbnails are gradient placeholders since
     scraped headlines carry no real images."""
     all_items = story_cache.get_stories(limit=settings.max_cached_stories)
-    items = [s for s in all_items if _fetched_within_last_24h(s)]
+    items, showing_stale = _select_display_items(all_items)
 
     if not items:
-        message = (
-            "No stories cached yet"
-            if not all_items
-            else "No stories fetched in the past 24 hours"
-        )
         return HTMLResponse(
             "<!doctype html><html><body style='background:#0b0b0f;color:#eee;"
             "font-family:system-ui,sans-serif;padding:2rem'>"
-            f"<h1>{html.escape(message)}</h1>"
+            "<h1>No stories cached yet</h1>"
             "<p>Call refresh_now or wait for the next scheduled refresh.</p>"
             "</body></html>"
         )
@@ -305,7 +316,7 @@ async def index(request: Request) -> HTMLResponse:
   <div class="meta">{html.escape(hero.get("source", ""))} · {html.escape(_format_fetched_at(hero.get("fetched_at")))}</div>
 </div>
 
-<div class="scope-note">Showing stories fetched in the past 24 hours</div>
+<div class="scope-note">{"Showing the most recently cached stories (older than 24 hours — next refresh pending)" if showing_stale else "Showing stories fetched in the past 24 hours"}</div>
 <div class="pills-row">
   <div class="pills">
     <div class="pill active" data-filter="all">All <span class="count">{len(items)}</span></div>
